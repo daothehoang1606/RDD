@@ -1,0 +1,352 @@
+---
+title: "Assignment RDD"
+output:
+  word_document: default
+  html_document: default
+date: "2026-04-25"
+---
+
+In an effort to address the social and public health problems associated with underage drinking, a group of American college presidents have lobbied states to return the minimum legal drinking age (MLDA) to the Vietnam era threshold of 18. The theory behind this effort (known as the Amethyst Initiative) is that legal drinking at age 18 discourages binge drinking and promotes a culture of mature alcohol consumption. This contrasts with the traditional view that the age-21 MLDA, while a blunt and imperfect tool, reduces youth access to alcohol, thereby preventing some harm. 
+
+You have been hired as an outside consultant by Mothers Against Drunk Driving (MADD) to study whether the over-21 drinking minimum in the US helps reduce alcohol consumption by young adults and its harms, or is it just not working. This example is based on data from Carpenter and Dobkin (2011).
+
+ASSIGNMENT: COMPLETE ALL THE CHUNKS THAT START WITH "STEP." AND RUN THE REST OF THE CHUNKS. TRY TO UNDERSTAND EACH CODE CHUNK. IT WILL BE HELPFUL TO USE PAST EXAMPLES. 
+
+# Libraries
+```{r}
+library(dplyr) # for data wrangling
+library(ggplot2) # for creating plots
+library(rdrobust) # for rdrobust()
+library(readr) # for loading the .csv data
+library(stargazer) # for visualizing tables and significance
+library(rddensity) 
+library(tidyverse)
+library(broom)
+set.seed(99) # for consistent results
+
+```
+
+# Import
+```{r}
+readr::read_csv("https://raw.githubusercontent.com/seramirezruiz/stats-ii-lab/master/Session%206/data/mlda.csv")
+mlda_df <- read.csv("mlda_df.csv")
+```
+
+# 1. Determine if process of assinging treatment is rule-based
+ANSWER HERE:
+Yes. Treatment is assigned mechanically based on age: individuals with agecell ≥ 21 are treated (over the legal drinking age) and those with agecell < 21 are not. That’s a deterministic cutoff rule and makes this a good candidate for a sharp RDD, assuming people cannot precisely manipulate their age at measurement.
+
+# Step 2. Check visually if it is a sharp or fuzzy RDD
+```{r}
+ggplot(mlda_df, aes(x = agecell, # actual age
+                 y = treatment, # are they over 21 or not
+                 color = factor(treatment))) +
+  geom_point() + 
+  labs(x = "Age", 
+       y = "Treatment Probability") +
+  scale_color_discrete(name = " ", 
+                       labels = c("Under legal drinking age", "Over legal drinking age")) +
+  geom_vline(xintercept = 21, linetype = "dotted") + # NEW GEOM A VERTICAL LINE!
+  theme_minimal()
+
+```
+
+# Step 3: Check for discontinuity in running variable around cutpoint
+```{r}
+ggplot(mlda_df, aes(x = agecell, fill = factor(treatment))) +
+  geom_histogram(binwidth = 0.25, boundary = 21, color = "white") +
+  geom_vline(xintercept = 21, linetype = "dotted") +
+  labs(x = "Age (in years)",
+       y = "Number of observations",
+       fill = "Treatment status") +
+  scale_fill_manual(values = c("#696969", "#cc0055"),
+                    labels = c("Under 21", "21 and over")) +
+  theme_minimal()
+```
+
+
+WHAT CAN YOU TELL FROM THE GRAPH?
+The age distribution looks perfectly smooth around 21. Bars are the same height just below and just above the cutoff, with no spike, gap, or pile-up at 21. That means there’s no evidence of bunching or manipulation of the running variable near the threshold, which is exactly what we want for a credible RDD.
+
+# Step 4 Check for density test
+```{r}
+test_density <- rddensity(mlda_df$agecell, c = 21)
+summary(test_density) 
+```
+
+After Calculating Density
+## Include the graph for density
+```{r}
+# Graph density test
+plot_density_test <- rdplotdensity(rdd = test_density, 
+                                   X = mlda_df$agecell, 
+                                   type = "both")  
+```
+
+The density replicates previosu findings so we don’t have good evidence that there’s a significant difference between the two lines. Based on this plot and the t-statistic, we’re probably safe in saying that there’s no manipulation or bunching.
+
+# Step 5: Check for discontinuity in outcomes
+```{r}
+# NOTE that we have the variable forcing in this dataset, which is centered at the cutoff. It is nothing but the variable age-21
+ggplot(mlda_df, aes(x = agecell, fill = factor(treatment))) +
+  geom_histogram(binwidth = 0.25, boundary = 21, color = "white") +
+  geom_vline(xintercept = 21, linetype = "dotted") +
+  labs(x = "Age (in years)",
+       y = "Number of observations",
+       fill = "Treatment status") +
+  scale_fill_manual(values = c("#696969", "#cc0055"),
+                    labels = c("Under 21", "21 and over")) +
+  theme_minimal()
+```
+
+Below you can run additional code to provide similar information for robustness
+# Running Linear Model Common Slope
+```{r}
+linear_common_slope <- lm(outcome ~ treatment + forcing, data = mlda_df)
+stargazer::stargazer(linear_common_slope, type = "text")
+#you can use tidy also
+```
+
+We can graph our results with ggplot() by extracting the predicted values of the model to recreate the linear fit:
+```{r}
+mlda_df$yhat_linear <- predict(linear_common_slope) # we create a new variable containing the predicted mortality rate
+
+linear_plot <- mlda_df %>% # for this plot make sure to put the df outside the ggplot() and pipe it
+  ggplot(aes(x = forcing,  
+             y = yhat_linear, # notice here the predicted y
+             col = factor(treatment))) +
+  geom_point(aes(x = forcing, 
+                 y = outcome, # notice here the actual outcome
+                 col = factor(treatment))) +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  labs(title = "Linear model with common slope",
+       x = "Forcing variable (Age)",
+       y = "Mortality rate from motor vehicle \naccidents (per 100,000)") +
+  geom_line(data = mlda_df[mlda_df$forcing >= 0,], 
+            color = "#cc0055", # color lines
+            size = 1) +
+  geom_line(data = mlda_df[mlda_df$forcing < 0,], 
+            color = "#696969", # color lines
+            size = 1) +
+  scale_color_manual(name = "",
+                     values = c("#696969", "#cc0055"),
+                     labels = c("Control", "Treatment")) + #change colors manually of color argument in aes()
+  theme_minimal()
+
+linear_plot
+```
+
+This imposes that the outcome evolves with the same trend (slope) in the forcing variable on both sides of the cutoff.
+The only allowed difference is a jump (intercept shift) at the cutoff due to treatment.
+
+Interpretation: Estimates a treatment effect as a vertical discontinuity.
+
+-Assumes units just above and below the threshold would follow parallel trends in the absence of treatment.
+-Valid only if slopes look similar visually.
+
+Graphically: Two lines that differ in height, not in slope.
+
+# Step 6: Measure the size of the effect
+## Parametric Stuff
+```{r}
+# No need to create a centered variable since we already have 'age' and 'forcing' doing that
+param_full <- lm(outcome ~ treatment + forcing, data = mlda_df)
+stargazer::stargazer(param_full, type = "text")
+broom::tidy(param_full)
+```
+
+What the coefficient of interest (treatment) indicates?
+So the interpretation is: crossing the legal drinking age causes roughly a 4–5 per-100k increase in crash deaths right at the cutoff, and it’s statistically significant.
+
+# Step 7: Use at least two different BWs
+
+```{r}
+# Use bw = 0.5 maybe
+
+# ±0.5 years around the cutoff
+mlda_bw_0.5 <- mlda_df %>% filter(abs(forcing) <= 0.5)
+model_bw_0.5 <- lm(outcome ~ treatment + forcing, data = mlda_bw_0.5)
+
+# ±1 year around the cutoff
+mlda_bw_1 <- mlda_df %>% filter(abs(forcing) <= 1)
+model_bw_1 <- lm(outcome ~ treatment + forcing, data = mlda_bw_1)
+
+stargazer::stargazer(model_bw_0.5, model_bw_1,
+                     type = "text",
+                     column.labels = c("±0.5 years", "±1 year"))
+```
+
+
+# Linear Model with different Slopes
+```{r}
+linear_different_slope <- lm(outcome ~ treatment*forcing, data = mlda_df)
+stargazer::stargazer(linear_different_slope, type = "text")
+```
+
+We can graph our results with ggplot by just adding a smooth geom. Since we have added treatment to our color aestethic, ggplot() will automatically create the regression line for each group
+
+```{r}
+diff_slopes_plot <- mlda_df %>% 
+  ggplot(aes(x = forcing,  
+             y = outcome, 
+             col = factor(treatment))) +
+  geom_point() +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_smooth(method = "lm", se = F) + # NORMAL SMOOTH 
+  labs(title = "Linear model with different slopes",
+       x = "Forcing variable (Age)",
+       y = "Mortality rate from motor vehicle \naccidents (per 100,000)") +
+  scale_color_manual(name = "",
+                     values = c("#696969", "#cc0055"),
+                     labels = c("Control", "Treatment")) + #change colors manually of color argument in aes()
+  theme_minimal()
+
+diff_slopes_plot
+```
+
+The interaction (treatment*forcing) allows: A shift in intercept (treatment effect), and a different slope after treatment.
+
+Interpretation:The treatment does not only generate a discontinuity—it changes the responsiveness of the outcome to the forcing variable.
+
+Useful if you see different slopes in the data near the cutoff.
+
+Graphically: Two lines that both differ in height and tilt differently.
+
+Why do we care? The visual comparison is a diagnostic (different and common slopes):
+-if the relationship between the outcome and forcing variable changes sharply only at the cutoff (vertical jump), use common slopes.
+-If the relationship also changes in trend, include the interaction.
+
+# Step 8: Measure NON-PARAMETRIC stuff
+```{r}
+rd_main <- rdrobust(y = mlda_df$outcome,
+                    x = mlda_df$forcing,
+                    c = 0,
+                    kernel = "tri",
+                    bwselect = "mserd")
+
+summary(rd_main)
+```
+
+# Step 9 Graph the RD plot
+```{r}
+# Graph the rdplot
+rdrobust::rdplot(y = mlda_df$outcome,
+                 x = mlda_df$forcing,
+                 c = 0,
+                 kernel = "tri",
+                 p = 1,
+                 x.label = "Age relative to 21",
+                 y.label = "Motor-vehicle mortality\n(per 100,000)",
+                 title  = "RDD at the Minimum Legal Drinking Age")
+```
+
+
+# Step 10 Use RD select
+```{r}
+# This says to use the mserd version, which according to the help file for
+# rdbwselect means "the mean squared error-optimal bandwidth selector for RD
+# treatment effects". Sounds great.
+bw_sel <- rdbwselect(y = mlda_df$outcome,
+                     x = mlda_df$forcing,
+                     c = 0,
+                     bwselect = "mserd",
+                     kernel = "tri")
+
+summary(bw_sel)
+
+```
+
+You could also use other BWs. Below you find alternative commands to find similar results
+
+# Non-linear model
+
+The model below fits:
+-One quadratic function of the forcing variable below the cutoff, and
+-A potentially different quadratic function above the cutoff,
+-With the discontinuity at the cutoff given by treatment (if forcing is centered), and additional differences in slope and curvature governed by the interaction terms.
+
+This is often described as a "more flexible (quasi) non parametric" specification, because it relaxes the strong linear common slope assumption and lets the data trace out different shapes on each side of the threshold, even though formally it is still a parametric polynomial regression.
+```{r}
+quadratic <- lm(outcome ~ forcing + 
+                  I(forcing^2) + # I tells R to interpret "as is"
+                  treatment + 
+                  I(forcing * treatment) + 
+                  I((forcing^2) * treatment),
+                data = mlda_df)
+
+stargazer::stargazer(quadratic, type = "text")
+```
+
+We can graph our results with ggplot by extracting the predicted values of our quadratic model to recreate the fit:
+
+```{r}
+mlda_df$yhat_quadratic <- predict(quadratic) 
+
+quadratic_plot <- mlda_df %>% 
+  ggplot(aes(x = forcing, 
+             y = yhat_quadratic, #note predicted y
+             col = factor(treatment))) +
+  geom_point(aes(x = forcing, 
+                 y = outcome, 
+                 col = factor(treatment))) +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  labs(title = "Quadratic plot",
+       x = "Forcing variable (Age)",
+       y = "Mortality rate from motor vehicle \naccidents (per 100,000)") +
+  geom_line(data = mlda_df[mlda_df$forcing >= 0,], 
+            color = "#cc0055", # color lines
+            size = 1) +
+  geom_line(data = mlda_df[mlda_df$forcing < 0,], 
+            color = "#696969", # color lines
+            size = 1) +
+  scale_color_manual(name = "",
+                     values = c("#696969", "#cc0055"),
+                     labels = c("Control", "Treatment")) + #change colors manually of color argument in aes()
+  theme_minimal()
+
+quadratic_plot
+```
+
+# Calculating the LATE with rdrobust()
+```{r}
+# model <- rdrobust::rdrobust(x, 
+  #                          y,
+   #                         c = cutoffvalue,
+    #                        kernel = "tri", #default
+     #                       bwselect = "mserd") #default
+   
+llr <- rdrobust::rdrobust(mlda_df$outcome, 
+                          mlda_df$forcing,  
+                          c = 0,
+                          kernel = "tri",
+                          bwselect = "mserd")
+summary(llr)
+                         
+```
+
+The key output from summary(llr) is the local average treatment effect exactly at the threshold, with robust bias-corrected inference. This is considered best practice, because it focuses on observations near the cutoff—where identification is most credible—and provides valid standard errors and confidence intervals.
+
+# Quadratic Model with rdrobust()
+```{r}
+quadratic_rdrobust <- rdrobust::rdrobust(mlda_df$outcome, 
+                                         mlda_df$forcing,  
+                                         c = 0,
+                                         kernel = "tri",
+                                         bwselect = "mserd",
+                                         p = 2) #polynomial 2
+summary(quadratic_rdrobust)
+```
+
+This chunk produces the RDD diagnostic plot that illustrates the discontinuity at the cutoff:
+```{r}
+rdrobust::rdplot(mlda_df$outcome, 
+                 mlda_df$forcing,  
+                 c = 0,
+                 kernel = "tri",
+                 p = 2,
+                 title = "Motor Vehicle Accidents Death",
+                 x.label = "Age from 21",
+                 y.label =  "Mortality rate from motor vehicle \naccidents (per 100,000)"
+)
+```
+Substantively, this plot helps evaluate the credibility of the RDD by showing whether there is a visible discontinuity in motor vehicle accident mortality exactly at age 21 (the legal drinking age) while the trend otherwise looks continuous. Such graphical checks are standard practice in RDD analysis (see Imbens and Lemieux 2008, Journal of Econometrics; Cattaneo, Idrobo, and Titiunik 2020, Cambridge University Press).
